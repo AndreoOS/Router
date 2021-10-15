@@ -1,0 +1,146 @@
+Nume: Dragne Lavinia-Stefana
+Grupa: 324 CA
+
+				     PROTOCOALE DE COMUNICATIE
+					Tema #1 - Router
+
+
+	Continutul proiectului este urmatorul:
+
+	- directorul include ce contine fisierele header
+	
+	- router.c, icmp.c, arp.c, skel.c, queue.c, list.c 
+	
+	- Makefile 
+
+	- acest fisier README.
+
+	Surse nou adaugate:
+
+	Functionalitatea router-ului este implementata folosind mai multe fisiere, pentru o
+	modularizare mai buna. Astfel, am adaugat:
+
+	* Fisierul arp.c ce contine o functie helper pentru realizarea unui arp_reply si
+	una pentru un arp_request.
+	* Fisierul icmp.c ce contine functii helper pentru a realiza: icmp_reply, 
+	icmp_time_exceeded si icmp_destination_unreachable.
+	* Headerele: router.h, icmp.h, arp.h.
+	
+	Flow-ul programului:
+	
+	-> Crearea tabelei de rutare
+	
+	Parsarea
+	* Se parseaza fisierul ce contine tabela de rutare, folosind functia
+	parse_route_table si se stocheaza intr-un vector global de structuri de tip 	
+	route_table_entry, ce contine prefixul, next_hop-ul, mask-ul si interface-ul
+	intrarii. De asemenea, variabila globala rtable_size memoreaza dimensiunea tabelei
+	de rutare.
+		-> Pentru parsare, se citeste linie cu linie fisierul de input si se
+		 parseaza, pe campurile structurii, folosind functia sscanf.
+		 
+	Sortarea
+	* Se sorteaza, folosind functia qsort, pe baza criteriilor definite in cmpfunc,
+	tabela de rutare. Tabela e sortata crescator dupa prefix si in caz de egalitate
+	crescator dupa mask.
+	
+	
+	Cautarea
+	* Cautarea in tabela de rutare, prin functia get_best_route, se face folosindu-se
+	cautare binara, vectorul de structuri fiind sortat anterior. Astfel, complexitatea
+	este logaritmica.
+	
+	
+	Tipul pachetului primit
+	* Se parseaza, folosindu-se functiile din skel.c, headerele ether, arp, ip si icmp,
+	din pachetul primit si in functie de acestea se identifica tipul pachetului.
+	
+	
+	-> Pachet arp
+	* Daca in urma parsarii, header-ul arp nu este null, trebuie identificat tipul
+	pachetului arp primit. 
+	* Daca este de tip request si adresa ip destinatie este cea
+	a interfetei router-ului, pe care a fost primit pachetul, trebuie trimis, prin
+	intermediul functiei arp_reply_with_my_mac, un arp reply. Adresa ip sursa din
+	header-ul ip devine destinatie si invers. Se construieste un header ethernet nou,
+	folosind functia build_ethhdr, inversandu-se, de asemenea, adresele mac sursa-
+	destinatie din header-ul arp. Se trimite pachetul, folosind functia send_arp.
+	* Daca este de tip arp reply, inseamna ca a fost primita o adresa mac, ce trebuie
+	stocata, eventual, in tabela arp. 
+		-> Se extrag adresa ip si adresa mac primite si
+		   se construieste cu acestea o noua arp_entry. 
+		-> Se foloseste functia update_arp_table pentru a adauga, daca aceasta nu
+		   exista deja, o noua intrare in tabela arp.
+		-> Daca in urma arp reply-ului s-a primit o adresa mac destinatie necesara
+		   pentru un pachet din coada, acesta trebuie acum transmis si scos din
+		   coada. 
+		-> Se foloseste functia dequeue_packets pentru a extrage primul pachet din
+		   coada. 
+		-> Se verifica daca adresa ip a next_hop-ului, pentru acest pachet, este
+		   egala cu adresa ip a celui care a trimis arp reply-ul, adica daca
+		   pachetul trebuia trimis la acel ip, pentru care nu stiam mac-ul, la acel
+		   moment si in caz afirmativ se folosesc functiile complete_mac_ether_hdr
+		   si send_packet pentru a livra pachetul.
+		 
+		   
+	-> Pachet ip
+	* Daca este adresat router-ului (adica daca ip-ul interfetei pe care este primit 
+	pachetul este ip-ul de destinatie, folosind functia get_interface_ip) si daca este
+	un pachet icmp, se trimite un icmp reply doar daca este de tip icmp_echo_request.
+		-> Pentru asta se foloseste functia icmp_echo_reply_with_my_mac care
+		interschimba adresele ip si mac destinatie-adresa si foloseste functia
+		send_icmp pentru a trimite pachetul.
+	* Se verifica ttl sa nu fie <= 1 si in caz contrar se foloseste functia icmp_error,
+	ce trimite un pachet cu un mesaj de tipul icmp_time_excedeed si arunca pachetul.
+	Ip-ul sursa pentru acest pachet trimis va fi ip-ul interfetei router-ului, pe care
+	a fost primit pachetul.
+	* Se verifica ca checksum-ul sa fie corect folosind functia ip_checksum.
+	* In cazul in care nu este adresat router-ului trebuie distribuit mai departe.
+		-> Se cauta, folosindu-se adresa ip de destinatie a pachetului, intrarea
+		corespunzatoare din tabela de rutare.
+		-> Daca nu exista una, pachetul nu poate fi trimis si se trimite, folosind
+		functia icmp_error, un mesaj de tipul unreachable destination.
+		-> Se updateaza, folosindu-se functia bonus_checksum, ttl-ul si checksum-ul.
+		-> Se cauta, pe baza ip-ului de destinatie, in tabela arp, un mac
+		destinatie. Daca se gaseste, se updateaza header-ul ethernet si se trimite
+		pachetul.
+		-> In caz contrar, pachetul este introdus intr-o coada de asteptare,
+		folosindu-se functia enqueue_packet si se trimite pe adresa mac de 
+		broadcast un arp_request, cu ip-ul destinatie, pentru a afla adresa lui mac.
+	
+		
+	-> BONUS
+	* Functia bonus_checksum decrementeaza ttl-ul si updateaza checksum-ul. S-a folosit
+	algoritmul incremental din RFC 1624, tinandu-se cont ca ttl-ul este campul din
+	structura care se modifica. De asemenea, se tine cont ca ttl-ul este reprezentat
+	pe 8 biti, iar acesta trebuie reprezentat, in formula de calcul a sumei, pe 16
+	biti. Pentru aceasta, se face cast, folosindu-se un & cu masca 0XFFFF. Suma
+	calculata se memoreaza in header-ul ip.
+	
+	-> Probleme intampinate
+	1. Dificultate in a face debug, a fost destul de greu sa folosim, fara niciun 
+	tutorial in prealabil, wireshark.
+	2. Checker-ul rula greu si dura foarte mult sa vad daca am ajuns sau nu la solutia
+	corecta.
+	3. Enuntul destul de neclar, multe detalii omise.
+	4. Timpul de raspuns pe forum mare.
+	
+	-> Referinte
+	1. Laboratoarele de PC 4 si 5
+	2. https://tools.ietf.org/html/rfc1624
+	3. https://www.geeksforgeeks.org/binary-search/
+	
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
